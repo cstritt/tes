@@ -1,0 +1,145 @@
+---
+title: "LTR-RT death rates"
+author: "cstritt"
+date: "18/07/2019"
+output: html_document
+---
+
+# Two methods to estimate the death rates of LTR retrotransposon families
+
+#### From Material & Methods:
+Assuming that full-length copies die at a constant rate, the survival func-
+tion of a LTR-RT family can be approximated by an exponential function
+of the form Nt = N0e−λt , where λ is the death rate of the family. To esti-
+mate λ for the nine families with at least 20 full length copies, exponential
+distributions were fitted to the age distributions using the fitdistr function
+of the R package MASS, and the exponential rate was recovered. In ad-
+dition, we estimated λS , an alternative death rate estimate which includes
+information on the age of solo LTRs, using the maximum likelihood func-
+tion of Dai et al. (2018). Confidence intervals for λS were obtained from 100
+bootstraps.
+
+
+```{r, include=TRUE, eval=FALSE}
+
+library(stats4)
+library(mosaic)
+
+# Implement the MLE approach of Dai et al. 2018, p. 1043
+deathrate <- function(y, age, lambda){
+  full = y*exp(-lambda*age)
+  solo = (1-y)*(1-exp(-lambda*age))
+  return(solo + full)
+}
+l_joint <- function(lambda){
+  R <- mapply(deathrate, df$y, df$my, lambda)
+  -log(prod(R))
+}
+
+
+# Load table
+tg <- read.table('data/SuppTable1.LTR-RTs.Bd21.tsv', header=T)
+
+# Only use high-confidence annotated TEs
+tg <- subset(tg, (cat == 'single' & tsd == 1 & ltr_context == 'solo_LTR') | 
+                  (cat == 'paired' & tsd == 1 & strand == '+' & ltr_context == "five_prime_LTR-three_prime_LTR") |
+                  (cat == 'paired' & tsd == 1 & strand == '-' & ltr_context == "three_prime_LTR-five_prime_LTR"))
+
+
+# How many observations per family?
+table(tg$fam)
+age_df <- data.frame()
+lambda_estimates <- data.frame()
+
+# Select families with at least ...
+include <- c('RLC_BdisC022', 'RLC_BdisC030', 'RLC_BdisC024', 
+             'RLG_BdisC152_B', 'RLG_BdisC039', 
+             'RLG_BdisC011', 'RLG_BdisC180', 'RLG_BdisC000', 'RLG_BdisC014')
+
+for (te in include){ 
+  
+  leaf_ages <- subset(tg, tg$fam == te)
+  if (nrow(leaf_ages)<10) next
+    
+  # remove rows with missing data
+  rmv <- which(is.na(leaf_ages$age))
+  if (length(rmv) > 0){
+    leaf_ages <- leaf_ages[-rmv, ]
+  }
+
+  # encode solo LTRs as 0 and FLEs as 1
+  leaf_ages$y <- rep(NA, nrow(leaf_ages))
+  leaf_ages$y[which(leaf_ages$cat=='single')] <- 0
+  leaf_ages$y[which(leaf_ages$cat=='paired')] <- 1
+  leaf_ages$my <- leaf_ages$terminal_branch_length/0.013
+    
+  
+  # First approach: fit geometric distribution to age distribution and recover death rate
+  leaf_ages_fle <- subset(leaf_ages, cat=='paired' )
+  geom1 <- MASS::fitdistr(leaf_ages_fle$age, "geometric")
+  geom1$loglik <- sum(stats::dgeom(leaf_ages_fle$my, geom1[["estimate"]], 
+                                     log = TRUE))
+    
+  p1 <- geom1$estimate["prob"]
+  deathRate <- p1/(1 - p1) # eq.(4)?
+    
+  # Second approach, including solo LTR age
+  df <- leaf_ages
+  fit <- mle(l_joint, start=list(lambda=1), method="Brent",  lower = 0.001, upper = 20)
+  leaf_ages$survival <- exp(-fit@coef*leaf_ages$my)
+    
+  # bootstrapping
+  nboot = 100
+  bootstrap <- c()
+  for (i in 1:nboot){
+    df <- leaf_ages[sample(nrow(leaf_ages), nrow(leaf_ages), replace=T), ]
+    fit <- mle(l_joint, start=list(lambda=1), method = "Brent", lower = 0.001, upper = 20)
+    bootstrap <- c(bootstrap, unname(fit@coef))
+  }
+  qtls<- qdata(bootstrap, c(0.025, 0.975))
+  
+  # extend data frames
+  age_df <- rbind(age_df, leaf_ages)
+    
+  lambda_row <- data.frame('family' = te, 'lambda'=unname(deathRate),'lambdaS' = unname(fit@coef),
+                           'lower' = qtls$quantile[1], 'upper' = qtls$quantile[2])
+    
+  lambda_estimates <- rbind(lambda_estimates, lambda_row)
+}
+
+
+lambda_estimates$half_life <- log(2) / lambda_estimates$lambda
+lambda_estimates$half_life_S <- log(2) / lambda_estimates$lambdaS
+lambda_estimates$half_life_CI_l_S <- log(2) / lambda_estimates$lower
+lambda_estimates$half_life_CI_u_S <- log(2) / lambda_estimates$upper
+
+
+ggplot(age_df) + 
+  geom_smooth(aes(x=age, y=survival, col=fam)) 
+
+
+# Plot survival functions
+survival <- data.frame()
+time = seq(0,10, 0.01)
+
+for (i in 1:nrow(lambda_estimates)){
+  
+  x <- lambda_estimates[i,]
+  prob <- exp(-x$lambdaS*time)
+  prob_ci_l <- exp(-x$lower*time)
+  prob_ci_u <- exp(-x$upper*time)
+
+  te <- rep(x$family, length(prob))
+  acc <- rep(x$acc, length(prob))
+  
+  df <- data.frame(time, te, prob, prob_ci_l, prob_ci_u)
+  survival <- rbind(survival, df)
+
+}
+
+ggplot(survival,aes(x=time, y=prob, col=te))  + 
+  geom_line(size=1) +
+  theme_bw(base_size=12, base_family = "Arial") +
+  xlab("Time (million years)") + ylab("Survival probability")+
+  scale_color_viridis_d(option='D')
+```
