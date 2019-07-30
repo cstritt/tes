@@ -1,4 +1,5 @@
-### Methods used in the paper 'Diversity, dynamics and effects of LTR retrotransposons in the model grass *Brachypodium distachyon*
+### Methods used in the paper 'Diversity, dynamics and effects of LTR retrotransposons in the model grass *Brachypodium distachyon*'
+C Stritt, M Wyler, EL Gimmi, M Pippel, AC Roulin
 
 https://www.biorxiv.org/content/10.1101/710657v1
 
